@@ -307,6 +307,24 @@ model WebAuthnChallenge {
   @@map("webauthn_challenges")
 }
 
+model AuditEvent {
+  id          String   @id @default(uuid())
+  actor       String
+  action      String
+  resource    String
+  resourceId  String?  @map("resource_id")
+  beforeState Json?    @map("before_state")
+  afterState  Json?    @map("after_state")
+  ip          String?
+  timestamp   DateTime @default(now())
+
+  @@index([actor])
+  @@index([action])
+  @@index([resource])
+  @@index([timestamp])
+  @@map("audit_events")
+}
+
 model AppConfig {
   id           String  @id @default("default")
   oidcEnabled  Boolean @default(false) @map("oidc_enabled")

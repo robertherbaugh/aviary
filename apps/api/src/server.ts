@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { z } from "zod";
 import bcrypt from "bcryptjs";
 import Fastify from "fastify";
 import cors from "@fastify/cors";
@@ -53,6 +54,7 @@ import {
   toSseFrame,
   toSseHeartbeat
 } from "./job-events.js";
+import { extractAuditInfo, queryAuditEvents, writeAuditEvent } from "./audit.js";
 
 const ENC_KEY = getKey(env.CREDENTIAL_ENCRYPTION_KEY);
 const PUBLIC_ROUTES = new Set([
@@ -313,6 +315,36 @@ export async function buildServer() {
       role: claims.role,
       sessionId: claims.sid
     };
+  });
+
+  // Audit middleware: write an AuditEvent after every mutating API request
+  app.addHook("onResponse", async (request) => {
+    const method = request.method.toUpperCase();
+    if (!["POST", "PUT", "PATCH", "DELETE"].includes(method)) return;
+
+    const url = request.url;
+    if (!url.startsWith("/api/v1/")) return;
+
+    const routeUrl = request.routeOptions.url ?? url;
+    const key = `${method}:${routeUrl}`;
+    if (PUBLIC_ROUTES.has(key)) return;
+
+    const actor = request.user?.id ?? "system";
+    const ip =
+      (request.headers["x-forwarded-for"] as string | undefined)?.split(",")[0]?.trim() ??
+      request.socket?.remoteAddress ??
+      null;
+
+    const info = extractAuditInfo(method, url);
+    if (!info) return;
+
+    writeAuditEvent(db, {
+      actor,
+      action: info.action,
+      resource: info.resource,
+      resourceId: info.resourceId,
+      ip
+    }).catch((err) => app.log.error({ err }, "Failed to write audit event"));
   });
 
   async function issueSession(user: { id: string; role: UserRole }) {
@@ -2179,6 +2211,37 @@ export async function buildServer() {
 
     await evaluateAlertsForMetrics(db, body.metrics);
     return { ok: true };
+  });
+
+  // ---------------------------------------------------------------------------
+  // Audit log
+  // ---------------------------------------------------------------------------
+
+  const auditQuerySchema = z.object({
+    actor: z.string().optional(),
+    action: z.string().optional(),
+    resource: z.string().optional(),
+    from: z.string().datetime({ offset: true }).optional(),
+    to: z.string().datetime({ offset: true }).optional(),
+    limit: z.coerce.number().int().min(1).max(500).optional(),
+    offset: z.coerce.number().int().min(0).optional()
+  });
+
+  app.get("/api/v1/audit", async (request) => {
+    const parsed = auditQuerySchema.safeParse(request.query);
+    if (!parsed.success) {
+      throw app.httpErrors.badRequest(parsed.error.issues.map((i) => i.message).join("; "));
+    }
+    const q = parsed.data;
+    return queryAuditEvents(db, {
+      actor: q.actor,
+      action: q.action,
+      resource: q.resource,
+      from: q.from ? new Date(q.from) : undefined,
+      to: q.to ? new Date(q.to) : undefined,
+      limit: q.limit,
+      offset: q.offset
+    });
   });
 
   app.setErrorHandler((error, request, reply) => {

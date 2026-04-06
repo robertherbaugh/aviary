@@ -798,3 +798,81 @@ describe("MFA endpoints", () => {
     expect(body).toHaveProperty("otpauthUrl");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Audit Log
+// ---------------------------------------------------------------------------
+
+describe("Audit log endpoints", () => {
+  it("GET /api/v1/audit returns paginated result", async () => {
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/audit",
+      headers: authHeaders()
+    });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body).toHaveProperty("items");
+    expect(body).toHaveProperty("total");
+    expect(body).toHaveProperty("limit");
+    expect(body).toHaveProperty("offset");
+    expect(Array.isArray(body.items)).toBe(true);
+  });
+
+  it("GET /api/v1/audit rejects invalid date filter", async () => {
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/audit?from=not-a-date",
+      headers: authHeaders()
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it("GET /api/v1/audit filters by actor", async () => {
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/audit?actor=nonexistent-user",
+      headers: authHeaders()
+    });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.total).toBe(0);
+    expect(body.items).toHaveLength(0);
+  });
+
+  it("GET /api/v1/audit requires authentication", async () => {
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/audit"
+    });
+    expect(res.statusCode).toBe(401);
+  });
+
+  it("audit middleware records a CREATE event after POST /api/v1/servers", async () => {
+    // Create a server to generate an audit event
+    await app.inject({
+      method: "POST",
+      url: "/api/v1/servers",
+      headers: authHeaders(),
+      payload: {
+        hostname: "audit-test-host",
+        ipAddress: "192.168.99.1",
+        port: 22,
+        displayName: "Audit Test Server"
+      }
+    });
+
+    // Audit event should have been recorded
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/audit?resource=server&action=CREATE",
+      headers: authHeaders()
+    });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.total).toBeGreaterThan(0);
+    const event = body.items[0];
+    expect(event.action).toBe("CREATE");
+    expect(event.resource).toBe("server");
+  });
+});
