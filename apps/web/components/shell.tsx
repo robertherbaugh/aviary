@@ -28,6 +28,18 @@ const searchTargets: Array<{ href: Route; terms: string[] }> = [
   {
     href: "/automation/settings/alerts-backend",
     terms: ["alerts backend", "alert backend", "webhook", "notification backend"]
+  },
+  {
+    href: "/notifications",
+    terms: ["notifications", "notification channels", "notification channel", "channels", "slack", "email channel"]
+  },
+  {
+    href: "/audit-log",
+    terms: ["audit", "audit log", "history", "activity log", "events"]
+  },
+  {
+    href: "/credential-rotation",
+    terms: ["rotation", "credential rotation", "rotate", "rotate credentials"]
   }
 ];
 

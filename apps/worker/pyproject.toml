@@ -21,7 +21,8 @@ aviary-worker = "aviary_worker.main:cli"
 
 [dependency-groups]
 dev = [
-  "pytest>=8.4.2"
+  "pytest>=8.4.2",
+  "pytest-asyncio>=0.24.0"
 ]
 
 [tool.uv]
@@ -32,3 +33,4 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+asyncio_mode = "auto"

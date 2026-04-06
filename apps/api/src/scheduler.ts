@@ -2,6 +2,9 @@ import type PgBoss from "pg-boss";
 import { CronExpressionParser } from "cron-parser";
 import { JobStatus, PrismaClient, TargetType } from "@aviary/db";
 import { PLAYBOOK_QUEUE } from "./queue.js";
+import { enqueueCredentialRotation, type RotationTrigger } from "./credentials.js";
+import { getKey } from "./crypto.js";
+import { env } from "./env.js";
 
 function nextRun(cronExpression: string, fromDate: Date): Date {
   const interval = CronExpressionParser.parse(cronExpression, { currentDate: fromDate });
@@ -28,6 +31,8 @@ async function resolveTargetServers(prisma: PrismaClient, targetType: TargetType
   });
   return tagged.map((item) => item.id);
 }
+
+const ENC_KEY = getKey(env.CREDENTIAL_ENCRYPTION_KEY);
 
 export function startScheduler(prisma: PrismaClient, boss: PgBoss) {
   const timer = setInterval(async () => {
@@ -76,6 +81,23 @@ export function startScheduler(prisma: PrismaClient, boss: PgBoss) {
           nextRunAt: nextRun(schedule.cronExpression, now)
         }
       });
+    }
+
+    // Scheduled credential rotation
+    const dueCredentials = await prisma.credential.findMany({
+      where: {
+        type: "ssh_key",
+        rotationIntervalDays: { not: null },
+        nextRotationAt: { lte: now }
+      }
+    });
+
+    for (const credential of dueCredentials) {
+      try {
+        await enqueueCredentialRotation(prisma, boss, ENC_KEY, credential.id, "scheduled" as RotationTrigger);
+      } catch {
+        // Log and continue — don't let one failed enqueue abort the whole scheduler tick
+      }
     }
   }, 15000);
 

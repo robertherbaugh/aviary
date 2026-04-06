@@ -11,6 +11,12 @@ enum CredentialType {
   password
 }
 
+enum RotationStatus {
+  pending
+  success
+  failed
+}
+
 enum JobStatus {
   queued
   running
@@ -48,6 +54,18 @@ enum AlertBackendType {
   webhook
 }
 
+enum NotificationChannelType {
+  email
+  webhook
+  slack
+}
+
+enum DeliveryStatus {
+  pending
+  success
+  failed
+}
+
 enum UserRole {
   admin
   operator
@@ -76,16 +94,37 @@ model Server {
 }
 
 model Credential {
-  id             String           @id @default(uuid())
-  name           String
-  type           CredentialType
-  encryptedValue String           @map("encrypted_value")
-  username       String
-  createdAt      DateTime         @default(now()) @map("created_at")
+  id                   String           @id @default(uuid())
+  name                 String
+  type                 CredentialType
+  encryptedValue       String           @map("encrypted_value")
+  username             String
+  rotationIntervalDays Int?             @map("rotation_interval_days")
+  nextRotationAt       DateTime?        @map("next_rotation_at")
+  lastRotatedAt        DateTime?        @map("last_rotated_at")
+  createdAt            DateTime         @default(now()) @map("created_at")
 
-  servers        ServerCredential[]
+  servers              ServerCredential[]
+  rotationHistory      RotationHistory[]
 
+  @@index([nextRotationAt])
   @@map("credentials")
+}
+
+model RotationHistory {
+  id             String         @id @default(uuid())
+  credentialId   String         @map("credential_id")
+  status         RotationStatus @default(pending)
+  triggeredBy    String         @default("manual") @map("triggered_by")
+  queueJobId     String?        @map("queue_job_id")
+  errorMessage   String?        @map("error_message")
+  startedAt      DateTime       @default(now()) @map("started_at")
+  completedAt    DateTime?      @map("completed_at")
+
+  credential     Credential     @relation(fields: [credentialId], references: [id], onDelete: Cascade)
+
+  @@index([credentialId, startedAt])
+  @@map("rotation_history")
 }
 
 model ServerCredential {
@@ -305,6 +344,40 @@ model WebAuthnChallenge {
   @@index([type, expiresAt])
   @@index([userId, type])
   @@map("webauthn_challenges")
+}
+
+model NotificationChannel {
+  id              String                  @id @default(uuid())
+  name            String
+  type            NotificationChannelType
+  target          String
+  enabled         Boolean                 @default(true)
+  retryCount      Int                     @default(3)  @map("retry_count")
+  retryBackoffSec Int                     @default(60) @map("retry_backoff_sec")
+  webhookSecret   String?                 @map("webhook_secret")
+  createdAt       DateTime                @default(now()) @map("created_at")
+  updatedAt       DateTime                @updatedAt      @map("updated_at")
+
+  deliveries      NotificationDelivery[]
+
+  @@map("notification_channels")
+}
+
+model NotificationDelivery {
+  id              String              @id @default(uuid())
+  channelId       String              @map("channel_id")
+  notificationId  String?             @map("notification_id")
+  status          DeliveryStatus      @default(pending)
+  message         String
+  errorMessage    String?             @map("error_message")
+  attempt         Int                 @default(1)
+  sentAt          DateTime            @default(now()) @map("sent_at")
+
+  channel         NotificationChannel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+
+  @@index([channelId, sentAt])
+  @@index([status])
+  @@map("notification_deliveries")
 }
 
 model AppConfig {

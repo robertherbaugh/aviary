@@ -12,6 +12,7 @@ class Config:
     internal_api_token: str
     pgboss_schema: str
     pgboss_queue: str
+    credential_rotation_queue: str
     poll_interval_ms: int
     command_timeout_s: int
     worker_concurrency: int
@@ -42,6 +43,7 @@ def load_config() -> Config:
         internal_api_token=os.environ.get("INTERNAL_API_TOKEN", "internal-token"),
         pgboss_schema=os.environ.get("PGBOSS_SCHEMA", "pgboss"),
         pgboss_queue=os.environ.get("PGBOSS_QUEUE", "playbook-jobs"),
+        credential_rotation_queue=os.environ.get("CREDENTIAL_ROTATION_QUEUE", "credential-rotation"),
         poll_interval_ms=int(os.environ.get("WORKER_POLL_INTERVAL_MS", "2000")),
         command_timeout_s=int(os.environ.get("WORKER_COMMAND_TIMEOUT_S", "120")),
         worker_concurrency=int(os.environ.get("WORKER_CONCURRENCY", "5")),

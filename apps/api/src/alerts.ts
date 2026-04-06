@@ -1,4 +1,6 @@
+import type PgBoss from "pg-boss";
 import { AlertBackendType, AlertOperator, AlertSeverity, PrismaClient } from "@aviary/db";
+import { dispatchToChannels } from "./notification-channels.js";
 
 export type ParsedMetricInput = {
   serverId: string;
@@ -59,7 +61,11 @@ async function dispatchAlertNotification(
   }
 }
 
-export async function evaluateAlertsForMetrics(prisma: PrismaClient, metrics: ParsedMetricInput[]) {
+export async function evaluateAlertsForMetrics(
+  prisma: PrismaClient,
+  metrics: ParsedMetricInput[],
+  boss?: PgBoss
+) {
   if (metrics.length === 0) return;
   const config = await prisma.appConfig.findUnique({
     where: { id: "default" },
@@ -124,6 +130,17 @@ export async function evaluateAlertsForMetrics(prisma: PrismaClient, metrics: Pa
           backend: backend.type,
           error: error instanceof Error ? error.message : "Unknown error"
         });
+      }
+
+      if (boss) {
+        try {
+          await dispatchToChannels(prisma, boss, message, createdNotification.id);
+        } catch (error) {
+          console.error("Failed to dispatch alert to notification channels", {
+            alertId: alert.id,
+            error: error instanceof Error ? error.message : "Unknown error"
+          });
+        }
       }
     }
   }

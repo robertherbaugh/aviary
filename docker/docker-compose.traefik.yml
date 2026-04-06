@@ -37,10 +37,17 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=${TRAEFIK_NETWORK:-traefik}"
+      # HTTPS router
       - "traefik.http.routers.aviary-api.rule=Host(`${AVIARY_DOMAIN}`) && (PathPrefix(`/api`) || PathPrefix(`/swagger`))"
       - "traefik.http.routers.aviary-api.entrypoints=websecure"
       - "traefik.http.routers.aviary-api.tls.certresolver=${TRAEFIK_CERTRESOLVER:-letsencrypt}"
       - "traefik.http.services.aviary-api.loadbalancer.server.port=${API_PORT:-4000}"
+      # HTTP → HTTPS redirect (no-op if Traefik is already globally redirecting)
+      - "traefik.http.routers.aviary-api-http.rule=Host(`${AVIARY_DOMAIN}`) && (PathPrefix(`/api`) || PathPrefix(`/swagger`))"
+      - "traefik.http.routers.aviary-api-http.entrypoints=web"
+      - "traefik.http.routers.aviary-api-http.middlewares=aviary-https-redirect"
+      - "traefik.http.middlewares.aviary-https-redirect.redirectscheme.scheme=https"
+      - "traefik.http.middlewares.aviary-https-redirect.redirectscheme.permanent=true"
     healthcheck:
       test: ["CMD-SHELL", "bun -e 'const r = await fetch(\"http://localhost:${API_PORT:-4000}/health\"); if (!r.ok) process.exit(1);'"]
       interval: 5s
@@ -66,12 +73,18 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=${TRAEFIK_NETWORK:-traefik}"
+      # HTTPS router
       - "traefik.http.routers.aviary-web.rule=Host(`${AVIARY_DOMAIN}`)"
       - "traefik.http.routers.aviary-web.entrypoints=websecure"
       - "traefik.http.routers.aviary-web.tls.certresolver=${TRAEFIK_CERTRESOLVER:-letsencrypt}"
       - "traefik.http.services.aviary-web.loadbalancer.server.port=${WEB_PORT:-3000}"
       # Lower priority so api routes match first
       - "traefik.http.routers.aviary-web.priority=1"
+      # HTTP → HTTPS redirect (no-op if Traefik is already globally redirecting)
+      - "traefik.http.routers.aviary-web-http.rule=Host(`${AVIARY_DOMAIN}`)"
+      - "traefik.http.routers.aviary-web-http.entrypoints=web"
+      - "traefik.http.routers.aviary-web-http.middlewares=aviary-https-redirect"
+      - "traefik.http.routers.aviary-web-http.priority=1"
 
   worker:
     image: ghcr.io/robertherbaugh/swift:latest

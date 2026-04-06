@@ -20,6 +20,7 @@ from .crypto import decrypt_secret
 from .job_results import build_failure_job_result
 from .parsers import parse_output
 from .proto import job_events_pb2, job_events_pb2_grpc
+from .rotation import RotationJob, run_rotation_job
 from .ssh import resolve_ssh_username
 
 LOGGER = logging.getLogger("aviary-worker")
@@ -815,19 +816,90 @@ async def worker_loop(config: Config) -> None:
                 result["status"],
             )
 
+    async def process_rotation(raw_claim: QueueClaim, payload: Dict[str, Any]) -> None:
+        async with semaphore:
+            LOGGER.info("Claimed rotation job=%s", raw_claim.queue_job_id)
+            rotation_job = RotationJob(
+                rotation_history_id=str(payload["rotationHistoryId"]),
+                credential_id=str(payload["credentialId"]),
+                encrypted_new_private_key=str(payload["encryptedNewPrivateKey"]),
+                new_public_key_pem=str(payload["newPublicKeyPem"]),
+            )
+            try:
+                await run_rotation_job(pool, config, rotation_job)
+                async with pool.acquire() as conn:
+                    await mark_queue_job_completed(
+                        conn,
+                        schema=config.pgboss_schema,
+                        queue_name=config.credential_rotation_queue,
+                        queue_job_id=raw_claim.queue_job_id,
+                        output={"rotationHistoryId": rotation_job.rotation_history_id, "status": "success"},
+                    )
+            except Exception:  # noqa: BLE001
+                LOGGER.exception("Rotation job=%s crashed", raw_claim.queue_job_id)
+                async with pool.acquire() as conn:
+                    await mark_queue_job_failed(
+                        conn,
+                        schema=config.pgboss_schema,
+                        queue_name=config.credential_rotation_queue,
+                        queue_job_id=raw_claim.queue_job_id,
+                        output={"rotationHistoryId": rotation_job.rotation_history_id, "status": "failed"},
+                    )
+
     try:
         tasks: List[asyncio.Task[None]] = []
         while True:
+            claimed_any = False
+
             async with pool.acquire() as conn:
                 async with conn.transaction():
                     claim = await claim_queue_job(conn, config.pgboss_schema, config.pgboss_queue)
 
-            if not claim:
-                await asyncio.sleep(config.poll_interval_ms / 1000)
-                continue
+            if claim:
+                claimed_any = True
+                tasks = [task for task in tasks if not task.done()]
+                tasks.append(asyncio.create_task(process(claim)))
 
-            tasks = [task for task in tasks if not task.done()]
-            tasks.append(asyncio.create_task(process(claim)))
+            # Poll rotation queue
+            async with pool.acquire() as conn:
+                async with conn.transaction():
+                    rotation_row = await conn.fetchrow(
+                        f"""
+                        WITH next AS (
+                          SELECT id
+                          FROM {config.pgboss_schema}.job
+                          WHERE name = $1
+                            AND state < 'active'
+                            AND start_after < now()
+                          ORDER BY priority DESC, created_on, id
+                          LIMIT 1
+                          FOR UPDATE SKIP LOCKED
+                        )
+                        UPDATE {config.pgboss_schema}.job j
+                        SET state = 'active',
+                            started_on = now(),
+                            retry_count = CASE WHEN started_on IS NOT NULL THEN retry_count + 1 ELSE retry_count END
+                        FROM next
+                        WHERE j.id = next.id
+                        RETURNING j.id, j.data
+                        """,
+                        config.credential_rotation_queue,
+                    )
+
+            if rotation_row:
+                claimed_any = True
+                raw_payload = rotation_row["data"] or {}
+                if isinstance(raw_payload, str):
+                    raw_payload = json.loads(raw_payload)
+                rotation_claim = QueueClaim(
+                    queue_job_id=str(rotation_row["id"]),
+                    app_job_id=str(raw_payload.get("rotationHistoryId", "")),
+                )
+                tasks = [task for task in tasks if not task.done()]
+                tasks.append(asyncio.create_task(process_rotation(rotation_claim, raw_payload)))
+
+            if not claimed_any:
+                await asyncio.sleep(config.poll_interval_ms / 1000)
 
     finally:
         await pool.close()

@@ -16,7 +16,8 @@ const groups: Array<{ title: string; links: Array<{ href: Route; label: string }
     title: "Inventory",
     links: [
       { href: "/servers", label: "Servers" },
-      { href: "/credentials", label: "Credentials" }
+      { href: "/credentials", label: "Credentials" },
+      { href: "/credential-rotation", label: "Credential Rotation" }
     ]
   },
   {
@@ -25,12 +26,14 @@ const groups: Array<{ title: string; links: Array<{ href: Route; label: string }
       { href: "/playbooks", label: "Playbooks" },
       { href: "/schedules", label: "Schedules" },
       { href: "/jobs", label: "Jobs" },
-      { href: "/alerts", label: "Alerts" }
+      { href: "/alerts", label: "Alerts" },
+      { href: "/notifications", label: "Notifications" }
     ]
   },
   {
-    title: "Platform Settings",
+    title: "Platform",
     links: [
+      { href: "/audit-log", label: "Audit Log" },
       { href: "/automation/settings/security", label: "Security" },
       { href: "/automation/settings/alerts-backend", label: "Alerts Backend" }
     ]

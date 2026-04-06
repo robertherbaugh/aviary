@@ -1,0 +1,12 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: aviary-api
+    static_configs:
+      - targets:
+          # When using docker-compose.dev.yml together, the API container is
+          # reachable by its service name. For standalone usage set API_HOST.
+          - "${API_HOST:-api}:${API_PORT:-4000}"
+    metrics_path: /metrics

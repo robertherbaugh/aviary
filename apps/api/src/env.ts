@@ -21,7 +21,12 @@ const envSchema = z.object({
   WEBAUTHN_RP_NAME: z.string().min(1).default("Aviary"),
   WEBAUTHN_ORIGIN: z.string().url().optional(),
   PGBOSS_SCHEMA: z.string().default("pgboss"),
-  INTERNAL_API_TOKEN: z.string().default("internal-token")
+  INTERNAL_API_TOKEN: z.string().default("internal-token"),
+  SMTP_HOST: z.string().optional(),
+  SMTP_PORT: z.coerce.number().default(587),
+  SMTP_USER: z.string().optional(),
+  SMTP_PASS: z.string().optional(),
+  SMTP_FROM: z.string().default("aviary@localhost")
 });
 
 const parsed = envSchema.safeParse(process.env);

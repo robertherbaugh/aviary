@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+const { mockEnqueueCredentialRotation } = vi.hoisted(() => ({
+  mockEnqueueCredentialRotation: vi.fn().mockResolvedValue({ id: "hist-1" }),
+}));
+
 vi.mock("@aviary/db", () => ({
   JobStatus: { queued: "queued" },
   TargetType: { server: "server", tag: "tag", all: "all" },
@@ -8,6 +12,29 @@ vi.mock("@aviary/db", () => ({
 
 vi.mock("./queue.js", () => ({
   PLAYBOOK_QUEUE: "playbook-jobs",
+  CREDENTIAL_ROTATION_QUEUE: "credential-rotation",
+}));
+
+vi.mock("./credentials.js", () => ({
+  enqueueCredentialRotation: mockEnqueueCredentialRotation,
+  nextRotationDate: vi.fn().mockReturnValue(new Date()),
+  generateSshKeyPair: vi.fn().mockReturnValue({ privateKeyPem: "priv", publicKeyPem: "pub" }),
+}));
+
+vi.mock("./crypto.js", () => ({
+  getKey: vi.fn().mockReturnValue(Buffer.alloc(32)),
+  encryptSecret: vi.fn().mockReturnValue("enc"),
+  decryptSecret: vi.fn().mockReturnValue("plain"),
+  sha256: vi.fn().mockReturnValue("hash"),
+}));
+
+vi.mock("./env.js", () => ({
+  env: {
+    CREDENTIAL_ENCRYPTION_KEY: "test-key-32-chars-long-exactly!!",
+    DATABASE_URL: "postgresql://test",
+    PGBOSS_SCHEMA: "pgboss",
+    INTERNAL_API_TOKEN: "test-token",
+  },
 }));
 
 import { startScheduler } from "./scheduler.js";
@@ -24,6 +51,9 @@ function makePrisma() {
     job: {
       create: vi.fn().mockResolvedValue({ id: "job-id" }),
       update: vi.fn().mockResolvedValue({}),
+    },
+    credential: {
+      findMany: vi.fn().mockResolvedValue([]),
     },
   } as unknown as Parameters<typeof startScheduler>[0];
 }
@@ -225,6 +255,70 @@ describe("startScheduler", () => {
     expect(prisma.job.update).toHaveBeenCalledWith(
       expect.objectContaining({ data: { queueJobId: "boss-job-xyz" } })
     );
+    cleanup();
+  });
+});
+
+describe("startScheduler — credential rotation", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    mockEnqueueCredentialRotation.mockClear();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("does not enqueue rotation when no credentials are due", async () => {
+    const prisma = makePrisma();
+    const boss = makeBoss();
+
+    const cleanup = startScheduler(prisma, boss);
+    await vi.advanceTimersByTimeAsync(15_000);
+
+    expect(mockEnqueueCredentialRotation).not.toHaveBeenCalled();
+    cleanup();
+  });
+
+  it("enqueues rotation for each due ssh_key credential", async () => {
+    const prisma = makePrisma();
+    const boss = makeBoss();
+
+    (prisma.credential.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { id: "cred-1", type: "ssh_key", rotationIntervalDays: 30 },
+      { id: "cred-2", type: "ssh_key", rotationIntervalDays: 90 },
+    ]);
+
+    const cleanup = startScheduler(prisma, boss);
+    await vi.advanceTimersByTimeAsync(15_000);
+
+    expect(mockEnqueueCredentialRotation).toHaveBeenCalledTimes(2);
+    expect(mockEnqueueCredentialRotation).toHaveBeenCalledWith(
+      prisma, boss, expect.any(Buffer), "cred-1", "scheduled"
+    );
+    expect(mockEnqueueCredentialRotation).toHaveBeenCalledWith(
+      prisma, boss, expect.any(Buffer), "cred-2", "scheduled"
+    );
+    cleanup();
+  });
+
+  it("continues to process remaining credentials if one enqueue fails", async () => {
+    const prisma = makePrisma();
+    const boss = makeBoss();
+
+    (prisma.credential.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { id: "cred-fail", type: "ssh_key", rotationIntervalDays: 30 },
+      { id: "cred-ok", type: "ssh_key", rotationIntervalDays: 30 },
+    ]);
+
+    mockEnqueueCredentialRotation
+      .mockRejectedValueOnce(new Error("queue unavailable"))
+      .mockResolvedValueOnce({ id: "hist-2" });
+
+    const cleanup = startScheduler(prisma, boss);
+    await vi.advanceTimersByTimeAsync(15_000);
+
+    expect(mockEnqueueCredentialRotation).toHaveBeenCalledTimes(2);
     cleanup();
   });
 });
